@@ -1,0 +1,248 @@
+#pragma once
+#include <stack>
+// Note boost.function provides a "Functor" type without templates:
+#include <boost/function.hpp>
+
+#define ERROR
+#define CALL_MEMBER_FN(object,ptrToMember)  ((object).*(ptrToMember))
+
+struct FuncList
+{
+    enum functype {
+        F_STARTLIST,
+        F_STARTDICTIONARY,
+        F_STARTDICTIONARYKEY,
+        F_ENDDICTIONARYKEY,
+        F_STARTDICTIONARYVALUE,
+        F_ENDDICTIONARYVALUE,
+        F_ENDDICTIONARY,
+        F_ENDLIST,
+        F_INTEGER,
+        F_STRING
+    } function_;
+    FuncList(functype function) : function_(function) {}
+};
+
+class TorFSM
+{
+    typedef void (TorFSM::*State)(char);
+    typedef void (*Callback)(FuncList::functype f);
+    typedef boost::function<void (FuncList::functype)> Operation;            // see boost.org
+    typedef boost::function<void (int) > Intfunc;                            // see boost.org
+    typedef boost::function<void (std::string)> Stringfunc;                  // see boost.org
+
+    // Functions that received tokens to form a parser:
+    typedef boost::function<void (std::string)> ParseSymbolString;     // see boost.org
+    typedef boost::function<void (int)> ParseSymbolInt;                // see boost.org
+    typedef boost::function<void (char)> ParseSymbol;                  // see boost.org
+    typedef std::deque<State> Stacktype;
+
+    // Functions or function objects. These are initialised in the constructor:
+    Operation operation_;
+    Intfunc intfunc_;
+    Stringfunc stringfunc_;
+
+    ParseSymbol parseSymbol_;
+    ParseSymbolInt parseSymbolInt_;
+    ParseSymbolString parseSymbolString_;
+
+public:
+    TorFSM(Operation operation, Intfunc intfunc, Stringfunc stringfunc, ParseSymbol parseSymbol, 
+           ParseSymbolInt parseSymbolInt, ParseSymbolString parseSymbolString) : 
+           operation_(operation),
+           intfunc_(intfunc),
+           stringfunc_(stringfunc),
+           parseSymbol_(parseSymbol),
+           parseSymbolInt_(parseSymbolInt),
+           parseSymbolString_(parseSymbolString),
+
+
+           dlevel_(0),
+           llevel_(0),
+           state_(Idle)
+    {
+    }
+
+    void Idle(char c)
+    {
+        if (!StandardTest(c))
+        {
+            ERROR;
+        }
+    }
+
+    void Dictionary(char c)
+    {
+        if (!StandardTest(c))
+        {
+            if (c == 'e')
+            {
+                operation_(FuncList::F_ENDDICTIONARY);
+                parseSymbol_('e');
+                Unstack();
+            }
+            else
+            {
+                ERROR;
+            }
+        }
+    }
+
+    void Integer(char c)
+    {
+        if (isdigit(c))
+        {
+            iresult_ = iresult_ * 10 + c - '0';
+        }
+        else if (c == 'e')
+        {
+//            intfunc_(iresult_);
+            parseSymbolInt_(iresult_);
+            Unstack();
+        }
+    }
+
+    void List(char c)
+    {
+        if (!StandardTest(c))
+        {
+            if (c == 'e')
+            {
+                operation_(FuncList::F_ENDLIST);
+                parseSymbol_('e'); // m is end of list
+                Unstack();
+            }
+            else
+            {
+                ERROR;
+            }
+        }
+    }
+
+    void String(char c)
+    {
+        sresultLength_ --;
+        sresult_ += c;
+
+        if (sresultLength_ == 0)
+        {
+//            stringfunc_(sresult_);
+            parseSymbolString_(sresult_);
+            Unstack();
+        }
+    }
+    
+
+
+#if 0
+    // Dictionary value...i.e. the second item in a key/value pair:
+    // this state is entered from the string state when the top-of-stack is dictionary
+    void DValue(char c)
+    {
+        if (!StandardTest(c))
+        {
+            ERROR;
+        }
+    }
+#endif
+
+    void WaitingForColon(char c)
+    {
+        if (c == ':')
+        {
+            if (sresultLength_ > 0)
+            {
+                sresult_ = "";
+                state_ = String;
+            }
+            else
+            {
+                // Ignore zero length strings:
+                Unstack();
+            }
+        }
+        else if (isdigit(c))
+        {
+            sresultLength_ = 10 * sresultLength_ + c - '0';
+        }
+    }
+
+    bool StandardTest(char c)
+    {
+        bool result = true;
+        if (c == 'i')
+        {
+            statestack_.push_back(state_);
+            iresult_ = 0;
+            state_ = Integer;
+        }
+        else if (c == 'd')
+        {
+            statestack_.push_back(state_);
+            dlevel_++;
+            state_ = Dictionary;
+            operation_(FuncList::F_STARTDICTIONARY);
+            parseSymbol_('d');
+        }
+        else if (c == 'l')
+        {   
+            statestack_.push_back(state_);
+            llevel_++;
+            state_= List;
+            operation_(FuncList::F_STARTLIST);
+            parseSymbol_('l');
+        }
+        else if (isdigit(c))
+        {
+            statestack_.push_back(state_);
+            sresultLength_ = c - '0';
+            state_= WaitingForColon;
+        }
+        else
+        {
+            result = false;
+        }
+        return result;
+    }
+
+
+    void NextState(State state)
+    {
+        statestack_.push_back(state_);
+        state_ = state;
+    }
+
+    // Function to remove two states from the stack in the case of dictionary/dvalue
+    // at the top of the stack, or just one state otherwise:
+    void Unstack()
+    {
+        state_ = statestack_.back();
+        statestack_.pop_back();
+    }
+
+
+    // Crank the state machine round:
+    template <class it> void Crank(it begin, it end)
+    {
+        // DEBUG
+        std::string ss = std::string(begin, end);
+        while (begin != end)
+        {
+            // DEBUG:
+            State pp = state_;
+            char c = *begin;
+
+            CALL_MEMBER_FN(*this, state_)(*begin);
+            begin++;
+        }
+    }
+
+private:
+    State state_;
+    Stacktype statestack_; // we can't use std::stack as we need access to more than just the top
+    std::deque<char> parseStack_;
+    int dlevel_, llevel_;
+    int iresult_;
+    std::string sresult_;
+    int sresultLength_;
+};
