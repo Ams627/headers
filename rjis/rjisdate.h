@@ -29,14 +29,14 @@ struct DateException : public std::exception
 
 inline uint32_t GetSerial(const int y, const int m, const int d)
 {
-	int result = 367 * y - 7 * (y + (m + 9) / 12) / 4 - 3 * ((y + (m - 9) / 7) / 100 + 1) / 4 + 275 * m / 9 + d - 719559;
+	int result = 367 * y - 7 * (y + (m + 9) / 12) / 4 - 3 * ((y + (m - 9) / 7) / 100 + 1) / 4 + 275 * m / 9 + d - 736359;
 	return (uint32_t)result;
 }
 
 // deserialise a date from a number of days - from 'The explanatory supplement to the astronomical almanac'
 inline void GetYMD(int&y, int&m, int&d, int n)
 {
-	int j = n + 719469;
+	int j = n + 702669;
 	y = (4 * j - 1) / 146097;
 	j = (4 * j - 1) % 146097;
 	d = j / 4;
